@@ -94,14 +94,6 @@ const AdminDashboard = ({ onNavigateToStoreManager }: AdminDashboardProps) => {
     datasets: [],
   });
   const [activeTab, setActiveTab] = useState('overview');
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  // Listen for detection-saved events from image/webcam prediction
-  useEffect(() => {
-    const handler = () => setRefreshKey(k => k + 1);
-    window.addEventListener('detection-saved', handler);
-    return () => window.removeEventListener('detection-saved', handler);
-  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -305,7 +297,82 @@ const AdminDashboard = ({ onNavigateToStoreManager }: AdminDashboardProps) => {
     };
 
     fetchData();
-  }, [refreshKey]);
+  }, []);
+
+  // Silent stats refresh — triggered by detection-saved (image/webcam)
+  // Does NOT call setLoading, so dashboard stays mounted and webcam keeps running
+  useEffect(() => {
+    const silentFetch = async () => {
+      try {
+        const [dashboardResponse, atRiskResponse] = await Promise.all([
+          dashboardApi.getStats(),
+          productApi.getAtRisk(),
+        ]);
+        const d = dashboardResponse.data;
+
+        setStats({
+          expiringItems: d.stats.atRiskProducts,
+          wastePrevented: d.stats.wastePrevented,
+          revenueSaved: d.stats.revenueSaved,
+          environmentalImpact: d.stats.environmentalImpact,
+        });
+        setAtRiskProducts(atRiskResponse.data);
+
+        if (d.categoryDistribution?.length > 0) {
+          const categoryColors: Record<string, string[]> = {
+            Dairy: ['rgba(54,162,235,0.6)', 'rgba(54,162,235,1)'],
+            Produce: ['rgba(75,192,192,0.6)', 'rgba(75,192,192,1)'],
+            Bakery: ['rgba(255,206,86,0.6)', 'rgba(255,206,86,1)'],
+            Meat: ['rgba(255,99,132,0.6)', 'rgba(255,99,132,1)'],
+            Seafood: ['rgba(153,102,255,0.6)', 'rgba(153,102,255,1)'],
+            Deli: ['rgba(255,159,64,0.6)', 'rgba(255,159,64,1)'],
+            Other: ['rgba(201,203,207,0.6)', 'rgba(201,203,207,1)'],
+          };
+          const labels = d.categoryDistribution.map((i: any) => i.category);
+          const data = d.categoryDistribution.map((i: any) => i.atRiskCount);
+          setCategoryData({
+            labels,
+            datasets: [{
+              label: 'At-Risk Items by Category',
+              data,
+              backgroundColor: labels.map((l: string) => categoryColors[l]?.[0] || 'rgba(201,203,207,0.6)'),
+              borderColor: labels.map((l: string) => categoryColors[l]?.[1] || 'rgba(201,203,207,1)'),
+              borderWidth: 1,
+            }],
+          });
+        }
+
+        if (d.rescueActionDistribution?.length > 0) {
+          const actionColors: Record<string, string[]> = {
+            'price-reduction': ['rgba(54,162,235,0.6)', 'rgba(54,162,235,1)'],
+            'food-bank-alert': ['rgba(75,192,192,0.6)', 'rgba(75,192,192,1)'],
+            'employee-discount': ['rgba(255,206,86,0.6)', 'rgba(255,206,86,1)'],
+            'final-sale': ['rgba(255,99,132,0.6)', 'rgba(255,99,132,1)'],
+          };
+          const actionLabels: Record<string, string> = {
+            'price-reduction': 'Price Reduction', 'food-bank-alert': 'Food Bank',
+            'employee-discount': 'Employee Discount', 'final-sale': 'Final Sale',
+          };
+          const labels = d.rescueActionDistribution.map((i: any) => actionLabels[i.status] || i.status);
+          const data = d.rescueActionDistribution.map((i: any) => i.count);
+          setRescueData({
+            labels,
+            datasets: [{
+              data,
+              backgroundColor: d.rescueActionDistribution.map((i: any) => actionColors[i.status]?.[0] || 'rgba(201,203,207,0.6)'),
+              borderColor: d.rescueActionDistribution.map((i: any) => actionColors[i.status]?.[1] || 'rgba(201,203,207,1)'),
+              borderWidth: 1,
+            }],
+          });
+        }
+      } catch (e) {
+        console.error('Silent refresh error:', e);
+      }
+    };
+
+    window.addEventListener('detection-saved', silentFetch);
+    return () => window.removeEventListener('detection-saved', silentFetch);
+  }, []);
 
   // Format currency
   const formatCurrency = (value: number) => {
