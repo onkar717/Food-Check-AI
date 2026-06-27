@@ -8,11 +8,28 @@ import mongoose from 'mongoose';
 export const getAllRescueRequests = async (req: Request, res: Response) => {
   try {
     const rescueRequests = await RescueRequest.find()
-      .populate('products')
+      .populate({ path: 'products', match: { _id: { $exists: true } } })
       .populate('foodBankId', 'name contactPerson phone')
-      .populate('rescuePersonnelId', 'firstName lastName phone');
-    
-    res.json(rescueRequests);
+      .populate('rescuePersonnelId', 'firstName lastName phone')
+      .sort({ createdAt: -1 });
+
+    // Filter out requests where all product refs are null (deleted products)
+    const valid = rescueRequests.filter(
+      r => Array.isArray(r.products) && r.products.some(p => p !== null)
+    );
+
+    // Deduplicate: per unique product, keep only the most recent request (already sorted newest-first)
+    const seenProducts = new Set<string>();
+    const deduped = valid.filter(r => {
+      const productIds = r.products
+        .filter(p => p !== null)
+        .map((p: any) => p._id.toString());
+      const hasNew = productIds.some(id => !seenProducts.has(id));
+      if (hasNew) productIds.forEach(id => seenProducts.add(id));
+      return hasNew;
+    });
+
+    res.json(deduped);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
@@ -151,17 +168,9 @@ export const updateRescueRequestStatus = async (req: Request, res: Response) => 
     
     // Add foodBankId if provided (for claiming)
     if (status === 'accepted' && foodBankId) {
-      // Check if food bank ID is valid
       if (!mongoose.Types.ObjectId.isValid(foodBankId)) {
         return res.status(400).json({ message: 'Invalid food bank ID format' });
       }
-      
-      // Verify the food bank exists
-      const foodBankExists = await FoodBank.exists({ _id: foodBankId });
-      if (!foodBankExists) {
-        return res.status(404).json({ message: 'Food bank not found' });
-      }
-      
       updateData.foodBankId = foodBankId;
       console.log(`Assigning rescue request to food bank: ${foodBankId}`);
     }
@@ -197,14 +206,6 @@ export const updateRescueRequestStatus = async (req: Request, res: Response) => 
       
       if (!rescueRequest) {
         return res.status(404).json({ message: 'Rescue request could not be updated' });
-      }
-      
-      // Verify the update was successful by checking if foodBankId was set correctly
-      if (status === 'accepted' && foodBankId) {
-        if (!rescueRequest.foodBankId || rescueRequest.foodBankId.toString() !== foodBankId) {
-          console.error('Food bank ID was not properly set in the update operation');
-          return res.status(500).json({ message: 'Failed to update food bank association' });
-        }
       }
       
       console.log('Successfully updated rescue request:', rescueRequest._id);
