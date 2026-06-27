@@ -259,7 +259,7 @@ async def detect_fruits(file: UploadFile = File(...)):
     if frame is None:
         raise HTTPException(status_code=400, detail="Could not decode image.")
 
-    results = yolo_model(frame, conf=0.4, device='cpu')
+    results = yolo_model(frame, conf=0.05, device='cpu')
     response_data = []
 
     for result in results:
@@ -270,7 +270,6 @@ async def detect_fruits(file: UploadFile = File(...)):
         for i, box in enumerate(boxes):
             class_id = int(class_ids[i])
 
-            # Only process food classes
             if class_id not in FOOD_CLASSES:
                 continue
 
@@ -297,6 +296,27 @@ async def detect_fruits(file: UploadFile = File(...)):
                 "pricing": pricing,
             })
 
+    # Fallback: if YOLO detected nothing, run CNN on whole frame
+    if not response_data and spoilage_model is not None:
+        frame_resized_detect = cv2.resize(frame, (640, 640))
+        is_rotten, spoilage_score = run_spoilage_cnn(frame_resized_detect)
+        if abs(spoilage_score - 0.5) > 0.15:
+            fruit_name = "fruit"
+            prediction = f"rotten_{fruit_name}" if is_rotten else f"fresh_{fruit_name}"
+            h, w = frame.shape[:2]
+            margin = 10
+            sensor_data = simulate_sensor_data(fruit_name, spoilage_score, (margin, margin, w - margin, h - margin))
+            pricing = dynamic_price_engine(fruit_name, is_rotten, spoilage_score, sensor_data)
+            response_data.append({
+                "box": [margin, margin, w - margin, h - margin],
+                "fruit": fruit_name,
+                "prediction": prediction,
+                "spoilage_score": round(spoilage_score, 3),
+                "detection_confidence": round(abs(spoilage_score - 0.5) * 2, 3),
+                "sensor_data": sensor_data,
+                "pricing": pricing,
+            })
+
     return {"detections": response_data, "total": len(response_data)}
 
 
@@ -319,7 +339,7 @@ async def websocket_video_endpoint(websocket: WebSocket):
                     frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
 
                     try:
-                        results = yolo_model(frame_rgb, conf=0.15, device='cpu')
+                        results = yolo_model(frame_rgb, conf=0.05, device='cpu')
                         detections = []
 
                         # Scale factors to map 640×640 YOLO boxes back to original frame dims
@@ -342,7 +362,6 @@ async def websocket_video_endpoint(websocket: WebSocket):
                                 is_rotten, spoilage_score = run_spoilage_cnn(crop)
                                 prediction = 'rotten' if is_rotten else 'fresh'
 
-                                # Scale boxes to original frame dimensions for correct canvas overlay
                                 detections.append({
                                     "box": [
                                         int(x1 * scale_x), int(y1 * scale_y),
@@ -350,6 +369,23 @@ async def websocket_video_endpoint(websocket: WebSocket):
                                     ],
                                     "class": fruit_name,
                                     "confidence": round(float(confidences[i]), 3),
+                                    "prediction": prediction,
+                                    "spoilage_score": round(spoilage_score, 3),
+                                    "timestamp": datetime.datetime.now().isoformat(),
+                                })
+
+                        # Fallback: YOLO found nothing (close-up fills full frame, loses context).
+                        # Run CNN on the entire frame and return a whole-frame detection.
+                        if not detections and spoilage_model is not None:
+                            is_rotten, spoilage_score = run_spoilage_cnn(frame_resized)
+                            # Only emit if CNN is reasonably confident (not near 0.5 boundary)
+                            if abs(spoilage_score - 0.5) > 0.15:
+                                prediction = 'rotten' if is_rotten else 'fresh'
+                                margin = 8
+                                detections.append({
+                                    "box": [margin, margin, orig_w - margin, orig_h - margin],
+                                    "class": "fruit",
+                                    "confidence": round(abs(spoilage_score - 0.5) * 2, 3),
                                     "prediction": prediction,
                                     "spoilage_score": round(spoilage_score, 3),
                                     "timestamp": datetime.datetime.now().isoformat(),
