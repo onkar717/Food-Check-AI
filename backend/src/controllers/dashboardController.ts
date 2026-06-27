@@ -30,7 +30,8 @@ export const getStats = async (req: Request, res: Response) => {
         default:
           weight = 0.4; // default weight
       }
-      return total + (weight * product.quantityInStock);
+      const qty = typeof product.quantityInStock === 'number' ? product.quantityInStock : 0;
+      return total + (weight * qty);
     }, 0);
     
     // Calculate revenue saved
