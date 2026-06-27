@@ -208,67 +208,60 @@ const VideoPrediction: React.FC = () => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
-      
+
       if (!ctx) return;
 
       if (video.videoWidth === 0 || video.videoHeight === 0) {
         animationFrameRef.current = requestAnimationFrame(captureFrame);
         return;
       }
-      
-      // Set canvas size to match video
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      
-      // Draw video frame to canvas
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+      // Step 1: capture CLEAN frame (no overlays) into offscreen canvas for server
+      const cleanCanvas = document.createElement('canvas');
+      cleanCanvas.width = video.videoWidth;
+      cleanCanvas.height = video.videoHeight;
+      const cleanCtx = cleanCanvas.getContext('2d')!;
+      cleanCtx.drawImage(video, 0, 0, cleanCanvas.width, cleanCanvas.height);
+      const base64Data = cleanCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+      // Step 2: draw video + bounding box overlays on DISPLAY canvas (for user)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       detections.forEach(detection => {
         const [x1, y1, x2, y2] = detection.box;
         const confidence = detection.confidence;
         const prediction = detection.prediction || 'unknown';
 
-        let color = '#00ff00'; // fresh = green
+        let color = '#00ff00';
         if (prediction === 'rotten') color = '#ff0000';
         else if (prediction === 'unknown') color = '#ffff00';
 
         ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
         const label = `${detection.class} (${(confidence * 100).toFixed(1)}%) - ${prediction}`;
         const labelWidth = ctx.measureText(label).width + 10;
         const labelHeight = 20;
-
         ctx.fillStyle = color;
         ctx.fillRect(x1, y1 - labelHeight, labelWidth, labelHeight);
-
         ctx.fillStyle = '#000000';
-        ctx.font = '12px Arial';
+        ctx.font = 'bold 13px Arial';
         ctx.fillText(label, x1 + 5, y1 - 5);
-    });
-        
-        // Convert to base64
-        const frameData = canvas.toDataURL('image/jpeg', 0.8);
-        const base64Data = frameData.split(',')[1];
-        console.log("Base64 length:", base64Data.length);
-      
-      // Send frame to server
+      });
+
+      // Step 3: send CLEAN frame to server
       const message = {
         type: 'frame',
         frame: base64Data,
         frame_count: frameCountRef.current
       };
-      
+
       if (websocketRef.current?.readyState === WebSocket.OPEN) {
-        console.log("Sending frame message:", message); 
         websocketRef.current.send(JSON.stringify(message));
         frameCountRef.current++;
-        
-        // Log every 30 frames for debugging
-        if (frameCountRef.current % 30 === 0) {
-          console.log(`Sent frame ${frameCountRef.current}, frame size: ${base64Data.length} chars`);
-        }
       } else {
         console.warn('WebSocket not open, frame not sent');
       }

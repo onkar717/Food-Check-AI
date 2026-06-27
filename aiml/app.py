@@ -319,7 +319,7 @@ async def websocket_video_endpoint(websocket: WebSocket):
                     frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
 
                     try:
-                        results = yolo_model(frame_rgb, conf=0.3, device='cpu')
+                        results = yolo_model(frame_rgb, conf=0.15, device='cpu')
                         detections = []
 
                         # Scale factors to map 640×640 YOLO boxes back to original frame dims
