@@ -35,6 +35,7 @@ export const getStats = async (req: Request, res: Response) => {
     
     // Calculate revenue saved
     const revenueSaved = rescuedProducts.reduce((total, product) => {
+      if (!product.currentPrice || product.currentPrice >= product.price) return total;
       const originalValue = product.price * product.quantityInStock;
       const discountedValue = product.currentPrice * product.quantityInStock;
       return total + (originalValue - discountedValue);
@@ -54,7 +55,7 @@ export const getStats = async (req: Request, res: Response) => {
     
     // Get rescue action distribution
     const rescueActionDistribution = await Product.aggregate([
-      { $match: { rescueStatus: { $ne: 'none' } } },
+      { $match: { rescueStatus: { $nin: ['none', null] } } },
       { $group: { _id: '$rescueStatus', count: { $sum: 1 } } },
       { $project: { _id: 0, status: '$_id', count: 1 } }
     ]);
