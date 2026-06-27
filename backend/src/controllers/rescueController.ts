@@ -24,12 +24,17 @@ export const getStoreRescueRequests = async (req: Request, res: Response) => {
     const storeId = req.params.storeId;
     
     const rescueRequests = await RescueRequest.find({ storeId })
-      .populate('products')
+      .populate({ path: 'products', match: { _id: { $exists: true } } })
       .populate('foodBankId', 'name contactPerson phone')
       .populate('rescuePersonnelId', 'firstName lastName phone')
       .sort({ createdAt: -1 });
-    
-    res.json(rescueRequests);
+
+    // Filter out requests where all product refs resolved to null (deleted products)
+    const valid = rescueRequests.filter(
+      r => Array.isArray(r.products) && r.products.some(p => p !== null)
+    );
+
+    res.json(valid);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
@@ -290,18 +295,25 @@ export const runRescueCascade = async (req: Request, res: Response) => {
         await product.save();
 
         if (rescueType === 'food-bank-alert') {
-          const rescueRequest = new RescueRequest({
-            products: [product._id],
-            storeId,
-            rescueType,
-            rescueCascadeStage: rescueStage,
-            daysUntilExpiration,
-            status: 'pending',
-            totalValue: product.price * product.quantityInStock,
-            totalWeight: product.quantityInStock * (product.category === 'Produce' ? 0.5 : 1.0),
-            environmentalImpact: product.quantityInStock * 2.5,
+          // Only create if no active request already exists for this product
+          const existing = await RescueRequest.findOne({
+            products: product._id,
+            status: { $in: ['pending', 'accepted', 'in-progress'] },
           });
-          await rescueRequest.save();
+          if (!existing) {
+            const rescueRequest = new RescueRequest({
+              products: [product._id],
+              storeId,
+              rescueType,
+              rescueCascadeStage: rescueStage,
+              daysUntilExpiration,
+              status: 'pending',
+              totalValue: product.price * product.quantityInStock,
+              totalWeight: product.quantityInStock * (product.category === 'Produce' ? 0.5 : 1.0),
+              environmentalImpact: product.quantityInStock * 2.5,
+            });
+            await rescueRequest.save();
+          }
         }
       }
     }
