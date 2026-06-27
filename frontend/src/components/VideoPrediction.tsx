@@ -1,4 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import axios from 'axios';
+import { toast } from 'react-hot-toast';
+import { authService } from '../services/auth.service';
 
 interface Detection {
   box: [number, number, number, number];
@@ -24,6 +27,8 @@ const VideoPrediction: React.FC = () => {
   const animationFrameRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef<number>(0);
   const frameCountRef = useRef<number>(0);
+  // Per-fruit debounce: only alert+save once per 60s per fruit
+  const alertedFruitsRef = useRef<Map<string, number>>(new Map());
 
   const startStream = useCallback(async () => {
     try {
@@ -63,7 +68,70 @@ const VideoPrediction: React.FC = () => {
           if (data.type === 'detection_results') {
             setDetections(data.detections);
             setFrameCount(data.frame_count);
-            setError(null); // Clear any previous errors
+            setError(null);
+
+            // Find rotten detections not alerted in past 60s
+            const now = Date.now();
+            const newRotten: typeof data.detections = data.detections.filter((d: any) => {
+              if (d.prediction !== 'rotten') return false;
+              const last = alertedFruitsRef.current.get(d.class) ?? 0;
+              return now - last > 60000;
+            });
+
+            if (newRotten.length > 0) {
+              // Mark alerted
+              newRotten.forEach((d: any) => alertedFruitsRef.current.set(d.class, now));
+
+              // Save each rotten detection to DB
+              newRotten.forEach((d: any) => {
+                axios.post('http://localhost:3000/api/products/from-detection', {
+                  fruit: d.class,
+                  prediction: 'rotten_' + d.class,
+                  spoilage_score: d.spoilage_score ?? 0.95,
+                  sensor_data: {
+                    estimated_days_left: 0,
+                    ethylene_ppm: 8.5,
+                    temperature_c: 27,
+                    humidity_percent: 75,
+                  },
+                  pricing: {
+                    action: 'donate',
+                    discount_applied: true,
+                    discount_percent: 70,
+                    price_usd: 0.30,
+                    message: 'Webcam live detection — rotten',
+                  },
+                }).catch(() => {});
+              });
+
+              // Trigger dashboard refresh
+              window.dispatchEvent(new CustomEvent('detection-saved'));
+
+              // Send WhatsApp alert
+              const user = authService.getCurrentUser();
+              const phone = user?.phone;
+              if (phone) {
+                axios.post('http://localhost:3000/api/alerts/spoilage', {
+                  phone,
+                  detections: newRotten.map((d: any) => ({
+                    fruit: d.class,
+                    prediction: 'rotten_' + d.class,
+                    spoilage_score: d.spoilage_score ?? 0.95,
+                    confidence: d.confidence,
+                  })),
+                }).then(res => {
+                  if (res.data.whatsappSent) {
+                    toast.error(`🚨 Rotten ${newRotten.map((d: any) => d.class).join(', ')} detected — WhatsApp alert sent!`, { duration: 5000 });
+                  } else {
+                    toast.error(`🚨 Rotten ${newRotten.map((d: any) => d.class).join(', ')} detected — rescue request created`, { duration: 5000 });
+                  }
+                }).catch(() => {
+                  toast.error(`🚨 Rotten ${newRotten.map((d: any) => d.class).join(', ')} detected!`, { duration: 5000 });
+                });
+              } else {
+                toast.error(`🚨 Rotten ${newRotten.map((d: any) => d.class).join(', ')} detected!`, { duration: 5000 });
+              }
+            }
           } else if (data.type === 'error') {
             console.error('Server error:', data.message);
             setError(`Server error: ${data.message}`);

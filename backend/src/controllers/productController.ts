@@ -76,6 +76,85 @@ export const getAtRiskProducts = async (req: Request, res: Response) => {
   }
 };
 
+// Create product from AI detection result (image or webcam)
+export const createFromDetection = async (req: Request, res: Response) => {
+  try {
+    const { fruit, prediction, spoilage_score, sensor_data, pricing } = req.body;
+
+    if (!fruit) {
+      return res.status(400).json({ message: 'fruit is required' });
+    }
+
+    const isRotten = prediction?.includes('rotten') || spoilage_score > 0.8;
+    const daysLeft: number = sensor_data?.estimated_days_left ?? (isRotten ? 0 : 3);
+
+    const categoryMap: Record<string, string> = {
+      apple: 'Produce', banana: 'Produce', orange: 'Produce',
+      broccoli: 'Produce', carrot: 'Produce',
+      'hot dog': 'Deli', pizza: 'Bakery', donut: 'Bakery',
+      cake: 'Bakery', sandwich: 'Deli',
+    };
+    const category = categoryMap[fruit.toLowerCase()] || 'Produce';
+
+    const expirationDate = new Date();
+    expirationDate.setDate(expirationDate.getDate() + daysLeft);
+
+    // Mirror cascade logic
+    let rescueStatus: 'none' | 'price-reduction' | 'food-bank-alert' | 'employee-discount' | 'final-sale' = 'none';
+    let discountPercentage = 0;
+
+    if (isRotten || daysLeft === 0) {
+      rescueStatus = 'final-sale';
+      discountPercentage = 70;
+    } else if (daysLeft <= 2) {
+      rescueStatus = 'food-bank-alert';
+    } else if (daysLeft <= 4) {
+      rescueStatus = 'price-reduction';
+      discountPercentage = 30;
+    } else if (daysLeft <= 7) {
+      rescueStatus = 'price-reduction';
+      discountPercentage = 10;
+    }
+
+    // Base price from pricing engine, reverse-calculate if discounted
+    let basePrice = 1.00;
+    let currentPrice: number | undefined;
+    if (pricing?.price_usd > 0) {
+      const disc = pricing.discount_percent || 0;
+      basePrice = disc > 0
+        ? Math.round((pricing.price_usd / (1 - disc / 100)) * 100) / 100
+        : pricing.price_usd;
+    }
+    if (discountPercentage > 0) {
+      currentPrice = Math.round(basePrice * (1 - discountPercentage / 100) * 100) / 100;
+    }
+
+    const productName = fruit.charAt(0).toUpperCase() + fruit.slice(1).toLowerCase();
+    const displayName = isRotten ? `${productName} (AI: Rotten)` : `${productName} (AI: Fresh)`;
+
+    const product = new Product({
+      name: displayName,
+      category,
+      subCategory: 'AI Detected',
+      price: basePrice,
+      currentPrice,
+      discountPercentage,
+      expirationDate,
+      atRisk: isRotten || daysLeft <= 3,
+      rescueStatus,
+      quantityInStock: 1,
+      unit: 'each',
+      imageUrl: '',
+    });
+
+    const saved = await product.save();
+    res.status(201).json(saved);
+  } catch (error: any) {
+    console.error('Error creating product from detection:', error);
+    res.status(500).json({ message: 'Failed to create product from detection', error: error.message });
+  }
+};
+
 // Apply price reduction to a product
 export const applyPriceReduction = async (req: Request, res: Response) => {
   try {

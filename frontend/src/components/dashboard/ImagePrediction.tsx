@@ -114,6 +114,21 @@ const ImagePrediction = () => {
         const detected: Detection[] = response.data.detections;
         setDetections(detected);
 
+        // Save every detected item to DB (feeds dashboard metrics)
+        await Promise.all(
+          detected.map(d =>
+            axios.post('http://localhost:3000/api/products/from-detection', {
+              fruit: d.fruit,
+              prediction: d.prediction,
+              spoilage_score: d.spoilage_score,
+              sensor_data: d.sensor_data,
+              pricing: d.pricing,
+            }).catch(() => {})
+          )
+        );
+        // Trigger dashboard refresh
+        window.dispatchEvent(new CustomEvent('detection-saved'));
+
         // Send WhatsApp alert if any rotten items found
         const hasRotten = detected.some(d =>
           d.prediction?.includes('rotten') || d.prediction?.includes('spoiled')
@@ -145,7 +160,7 @@ const ImagePrediction = () => {
             toast.error('Rotten items detected! Login with WhatsApp number to receive alerts.');
           }
         } else {
-          toast.success('All items look fresh!');
+          toast.success('All items look fresh! Added to inventory.');
         }
       } else {
         setError('No objects were detected in the image. Try with a different image.');

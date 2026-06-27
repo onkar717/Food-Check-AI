@@ -94,6 +94,14 @@ const AdminDashboard = ({ onNavigateToStoreManager }: AdminDashboardProps) => {
     datasets: [],
   });
   const [activeTab, setActiveTab] = useState('overview');
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Listen for detection-saved events from image/webcam prediction
+  useEffect(() => {
+    const handler = () => setRefreshKey(k => k + 1);
+    window.addEventListener('detection-saved', handler);
+    return () => window.removeEventListener('detection-saved', handler);
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -297,7 +305,7 @@ const AdminDashboard = ({ onNavigateToStoreManager }: AdminDashboardProps) => {
     };
 
     fetchData();
-  }, []);
+  }, [refreshKey]);
 
   // Format currency
   const formatCurrency = (value: number) => {

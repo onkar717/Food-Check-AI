@@ -6,13 +6,15 @@ import {
   updateProduct,
   deleteProduct,
   getAtRiskProducts,
-  applyPriceReduction
+  applyPriceReduction,
+  createFromDetection
 } from '../controllers/productController';
 
 const router = express.Router();
 
 // Custom routes for food waste management
 router.get('/at-risk', getAtRiskProducts);
+router.post('/from-detection', createFromDetection);
 
 // Basic CRUD routes
 router.get('/', getAllProducts);
