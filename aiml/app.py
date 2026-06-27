@@ -314,12 +314,17 @@ async def websocket_video_endpoint(websocket: WebSocket):
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
                 if frame is not None and yolo_model is not None:
+                    orig_h, orig_w = frame.shape[:2]
                     frame_resized = cv2.resize(frame, (640, 640))
                     frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
 
                     try:
                         results = yolo_model(frame_rgb, conf=0.3, device='cpu')
                         detections = []
+
+                        # Scale factors to map 640×640 YOLO boxes back to original frame dims
+                        scale_x = orig_w / 640
+                        scale_y = orig_h / 640
 
                         for result in results:
                             boxes = result.boxes.xyxy.cpu().numpy()
@@ -337,8 +342,12 @@ async def websocket_video_endpoint(websocket: WebSocket):
                                 is_rotten, spoilage_score = run_spoilage_cnn(crop)
                                 prediction = 'rotten' if is_rotten else 'fresh'
 
+                                # Scale boxes to original frame dimensions for correct canvas overlay
                                 detections.append({
-                                    "box": [x1, y1, x2, y2],
+                                    "box": [
+                                        int(x1 * scale_x), int(y1 * scale_y),
+                                        int(x2 * scale_x), int(y2 * scale_y),
+                                    ],
                                     "class": fruit_name,
                                     "confidence": round(float(confidences[i]), 3),
                                     "prediction": prediction,
